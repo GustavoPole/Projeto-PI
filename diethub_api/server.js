@@ -474,10 +474,17 @@ app.post("/api/scan-plan", authenticateToken, async (req, res) => {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-    const prompt = `Você é um nutricionista especialista. Analise este documento de plano alimentar e extraia TODAS as informações nutricionais presentes.
+    const prompt = `Você é um nutricionista especialista. Analise o arquivo enviado.
 
-Retorne APENAS um JSON válido, sem markdown, sem blocos de código, sem texto extra. Use exatamente este formato:
+IMPORTANTE: Se o arquivo NÃO for um plano alimentar (por exemplo: foto de pessoa, animal, objeto, paisagem, ou documento sem relação com dieta), retorne EXATAMENTE este JSON:
 {
+  "is_plano_alimentar": false,
+  "mensagem": "O arquivo enviado não foi identificado como um plano alimentar. Por favor, envie uma imagem ou PDF da sua dieta."
+}
+
+Se o arquivo FOR um plano alimentar, extraia as informações e retorne EXATAMENTE este formato JSON:
+{
+  "is_plano_alimentar": true,
   "plano": {
     "nome": "Nome do plano ou 'Plano Alimentar Digitalizado' se não houver nome"
   },
@@ -506,12 +513,12 @@ Retorne APENAS um JSON válido, sem markdown, sem blocos de código, sem texto e
   ]
 }
 
-Regras:
-- porcao_g, calorias, proteinas, carbos, gorduras devem ser strings numéricas
-- quantidade_g deve ser number
-- horario_previsto no formato HH:MM:SS (ex: "07:00:00")
-- Se um valor não estiver no documento, estime com base em valores nutricionais típicos do alimento
-- Extraia TODAS as refeições e TODOS os alimentos visíveis no documento`;
+Regras para quando for plano alimentar:
+- Retorne APENAS o JSON, sem markdown, sem blocos de código.
+- porcao_g, calorias, proteinas, carbos, gorduras devem ser strings numéricas.
+- quantidade_g deve ser number.
+- horario_previsto no formato HH:MM:SS (ex: "07:00:00").
+- Se um valor não estiver no documento, estime com base em valores nutricionais típicos.`;
 
     const result = await model.generateContent([
       { inlineData: { data: fileBase64, mimeType } },
@@ -523,6 +530,15 @@ Regras:
     if (!jsonMatch) throw new Error("A IA retornou uma resposta fora do formato esperado.");
 
     const data = JSON.parse(jsonMatch[0]);
+
+    if (data.is_plano_alimentar === false) {
+      console.log("⚠️ [Gemini Scan] Documento não identificado como plano alimentar.");
+      return res.status(200).json({ 
+        success: false, 
+        message: data.mensagem || "O arquivo enviado não parece ser um plano alimentar." 
+      });
+    }
+
     console.log(`✅ [Gemini Scan] Plano extraído: ${data.refeicoes?.length ?? 0} refeições.`);
     res.status(200).json({ success: true, data });
   } catch (error) {
