@@ -6,7 +6,7 @@ class AiService {
   static String get _baseUrl {
     if (kIsWeb) return 'http://localhost:3000';
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return 'http://10.0.2.2:3000';
+      return 'http://10.0.3.2:3000';
     }
     return 'http://localhost:3000';
   }
@@ -145,6 +145,57 @@ class AiService {
       };
     } catch (e) {
       return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  static Future<Map<String, dynamic>> scanPlan({
+    required String fileBase64,
+    required String mimeType,
+    required String token,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/scan-plan'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({'fileBase64': fileBase64, 'mimeType': mimeType}),
+          )
+          .timeout(const Duration(seconds: 90));
+      final body = jsonDecode(response.body);
+      if (response.statusCode == 200 && body['success'] == true) {
+        return {'success': true, 'data': body['data']};
+      }
+      return {'success': false, 'message': body['message'] ?? 'Erro ao analisar o arquivo.'};
+    } catch (e) {
+      return {'success': false, 'message': 'Erro de conexão: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> saveScannedPlan({
+    required Map<String, dynamic> data,
+    required String token,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/save-scanned-plan'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({'data': data}),
+          )
+          .timeout(const Duration(seconds: 30));
+      final body = jsonDecode(response.body);
+      if (response.statusCode == 200 && body['success'] == true) {
+        return {'success': true};
+      }
+      return {'success': false, 'message': body['message'] ?? 'Erro ao salvar no banco.'};
+    } catch (e) {
+      return {'success': false, 'message': 'Erro de conexão: $e'};
     }
   }
 
