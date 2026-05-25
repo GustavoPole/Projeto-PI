@@ -35,12 +35,38 @@ class AiService {
     required String foodDescription,
     required double caloriesConsumed,
     required double caloriesGoal,
+    required String token,
+    double proteinGoal = 0,
+    double carbsGoal = 0,
+    double fatGoal = 0,
+    List<Map<String, dynamic>> planMeals = const [],
   }) async {
     try {
-      await Future.delayed(const Duration(seconds: 2));
-      return _mockDietEscape(foodDescription);
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/diet-escape'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'foodDescription': foodDescription,
+          'caloriesConsumed': caloriesConsumed,
+          'caloriesGoal': caloriesGoal,
+          'proteinGoal': proteinGoal,
+          'carbsGoal': carbsGoal,
+          'fatGoal': fatGoal,
+          'planMeals': planMeals,
+        }),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          return {'success': true, 'analysis': data['analysis']};
+        }
+      }
+      return {'success': false, 'error': 'Erro ao analisar fuga.'};
     } catch (e) {
-      return {'error': 'Erro ao analisar fuga: $e'};
+      return {'success': false, 'error': 'Erro de conexao: $e'};
     }
   }
 
@@ -83,19 +109,26 @@ class AiService {
     required String data,
     required int itemRefeicaoBaseId,
     required Map<String, dynamic> novoAlimento,
+    dynamic alimentoOriginalId,
+    dynamic
+    itemDiarioId, // id da linha em itens_diario (trocas manuais efêmeras)
   }) async {
     try {
+      final payload = <String, dynamic>{
+        'data': data,
+        'item_refeicao_base_id': itemRefeicaoBaseId,
+        'novoAlimento': novoAlimento,
+      };
+      if (alimentoOriginalId != null)
+        payload['alimento_original_id'] = alimentoOriginalId;
+      if (itemDiarioId != null) payload['item_diario_id'] = itemDiarioId;
       final response = await http.post(
         Uri.parse('$_baseUrl/api/accept-food-swap'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-        body: jsonEncode({
-          'data': data,
-          'item_refeicao_base_id': itemRefeicaoBaseId,
-          'novoAlimento': novoAlimento,
-        }),
+        body: jsonEncode(payload),
       );
       Map<String, dynamic> body = {};
       if (response.body.isNotEmpty) {
@@ -107,7 +140,8 @@ class AiService {
       }
       return {
         'success': false,
-        'message': body['message']?.toString() ?? 'Erro HTTP ${response.statusCode}',
+        'message':
+            body['message']?.toString() ?? 'Erro HTTP ${response.statusCode}',
       };
     } catch (e) {
       return {'success': false, 'message': e.toString()};
@@ -165,22 +199,4 @@ class AiService {
       },
     };
   }
-
-  static Map<String, dynamic> _mockDietEscape(String food) {
-    return {
-      'success': true,
-      'analysis': {
-        'message':
-            'Identificamos a fuga com "$food". Sem problemas, vamos ajustar!',
-        'adjustments': [
-          {'type': 'reduce', 'food': 'Arroz do jantar', 'amount': '-80g'},
-          {'type': 'reduce', 'food': 'Pão do lanche', 'amount': '-1 fatia'},
-          {'type': 'add', 'food': 'Caminhada leve', 'amount': '+20 minutos'},
-        ],
-        'motivation':
-            'Uma refeição não define sua jornada. O que importa é a consistência ao longo do tempo!',
-      },
-    };
-  }
-
 }

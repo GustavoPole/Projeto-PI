@@ -1,27 +1,44 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:projeto_pi/screens/auth/login_screen.dart';
 import 'package:projeto_pi/providers/app_state.dart';
+import 'package:projeto_pi/screens/auth/login_screen.dart';
+import 'package:projeto_pi/screens/home/home_screen.dart';
 
-void main() {
+// FIX 3: main é async e aguarda loadFromPrefs ANTES de chamar runApp.
+// Isso garante que o token já está no AppState quando qualquer tela
+// chamar _loadDbPlan — evitando a requisição com token vazio que fazia
+// o plano sumir ao reabrir o app.
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final appState = AppState();
+  await appState.loadFromPrefs(); // carrega token, nome, email e foto
+
   runApp(
-    ChangeNotifierProvider(create: (_) => AppState(), child: const MyApp()),
+    ChangeNotifierProvider<AppState>.value(
+      value: appState,
+      child: const DietHubApp(),
+    ),
   );
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class DietHubApp extends StatelessWidget {
+  const DietHubApp({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final token = context.read<AppState>().token;
+
     return MaterialApp(
-      title: 'DietHub',
+      title: 'dietHub',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch: Colors.green,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2E7D32)),
+        useMaterial3: true,
+        fontFamily: 'Inter',
       ),
-      home: const LoginScreen(),
+      // Se já tem token salvo, vai direto para Home; senão, Login.
+      home: token.isNotEmpty ? const HomeScreen() : const LoginScreen(),
     );
   }
 }

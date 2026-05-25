@@ -1,15 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:projeto_pi/providers/app_state.dart';
+import 'package:projeto_pi/services/api_service.dart';
 
 class LogMealScreen extends StatefulWidget {
-  const LogMealScreen({super.key});
+  /// Quando fornecido, a tela abre já nessa refeição e
+  /// oculta o seletor de abas — o contexto fica travado.
+  final String? initialMeal;
+
+  const LogMealScreen({super.key, this.initialMeal});
 
   @override
   State<LogMealScreen> createState() => _LogMealScreenState();
 }
 
 class _LogMealScreenState extends State<LogMealScreen> {
-  String _selectedMeal = 'Café da manhã';
+  late String _selectedMeal;
   bool _isLoading = false;
+  bool _isSaving = false;
+
+  // Quando true, o seletor de refeição fica oculto (contexto travado)
+  bool get _mealLocked => widget.initialMeal != null;
 
   final List<String> _mealTypes = [
     'Café da manhã',
@@ -86,6 +97,13 @@ class _LogMealScreenState extends State<LogMealScreen> {
     },
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    // Herda o contexto passado pelo chamador; se nulo, usa a primeira refeição
+    _selectedMeal = widget.initialMeal ?? 'Café da manhã';
+  }
+
   int get _totalCal => _added.fold(0, (s, f) => s + (f['cal'] as int));
 
   void _addFood(Map<String, dynamic> food) {
@@ -104,6 +122,9 @@ class _LogMealScreenState extends State<LogMealScreen> {
 
   void _removeFood(int i) => setState(() => _added.removeAt(i));
 
+  /// Persiste cada alimento via API e depois retorna a lista à tela anterior.
+  /// BUG 2 corrigido: sem a chamada à API, o dado só ficava no AppState local
+  /// e sumia quando _loadDbPlan() atualizava a tela com dados do banco.
   Future<void> _save() async {
     if (_added.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -119,10 +140,71 @@ class _LogMealScreenState extends State<LogMealScreen> {
       );
       return;
     }
-    setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 500));
+
+    setState(() => _isSaving = true);
+
+    final state = context.read<AppState>();
+    final token = state.token;
+
+    bool anyError = false;
+
+    if (token.isNotEmpty) {
+      for (final food in _added) {
+        // Quantidade em gramas: extrai número da string "170g", "1 unidade", etc.
+        final unitStr = food['unit']?.toString() ?? '100g';
+        final qtdG =
+            double.tryParse(unitStr.replaceAll(RegExp(r'[^0-9.]'), '')) ??
+            100.0;
+
+        // `refeicaoReferencia` = nome legível da refeição ("Café da manhã", "Almoço"...)
+        // `tipo` = valor do enum do banco: SEMPRE 'consumido' para registro manual
+        // Erro anterior: enviávamos 'cafe_manha', 'almoco' etc. no campo `tipo`,
+        // mas o enum da tabela itens_diario só aceita 'planejado','consumido','fuga'.
+        // O MySQL rejeitava o INSERT silenciosamente, causando o erro 500.
+        final mealKey = food['meal']?.toString() ?? _selectedMeal;
+
+        final result = await ApiService.salvarRefeicao(
+          token: token,
+          alimentoId: 0,
+          quantidadeG: qtdG,
+          tipo: 'consumido',
+          refeicaoReferencia: mealKey,
+          nome: food['name']?.toString(),
+          // Envia os macros para o servidor salvar valores reais no banco
+          calorias: food['cal'],
+          proteinas: food['p'],
+          carbos: food['c'],
+          gorduras: food['g'],
+        );
+
+        if (result['success'] != true) {
+          anyError = true;
+        }
+      }
+    }
+
     if (!mounted) return;
-    // Retorna a lista de alimentos para a home_screen processar
+    setState(() => _isSaving = false);
+
+    if (anyError && token.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Alguns alimentos podem não ter sido salvos no servidor. '
+            'Verifique sua conexão.',
+          ),
+          backgroundColor: Colors.orange[700],
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          margin: const EdgeInsets.all(16),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+
+    // Retorna a lista para home_screen atualizar o AppState local também
     Navigator.pop(context, List<Map<String, dynamic>>.from(_added));
   }
 
@@ -132,7 +214,7 @@ class _LogMealScreenState extends State<LogMealScreen> {
       backgroundColor: const Color(0xFFF5F7F5),
       body: Column(
         children: [
-          // HEADER
+          // ── HEADER ──────────────────────────────────────────────────────────
           Container(
             padding: EdgeInsets.fromLTRB(
               16,
@@ -154,7 +236,7 @@ class _LogMealScreenState extends State<LogMealScreen> {
                       child: Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.15),
+                          color: Colors.white.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Icon(
@@ -165,14 +247,29 @@ class _LogMealScreenState extends State<LogMealScreen> {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text(
-                        'Registrar Refeição',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                        ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'Registrar Refeição',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          // BUG 3: mostra qual refeição está travada
+                          if (_mealLocked)
+                            Text(
+                              _selectedMeal,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.8),
+                                fontSize: 12,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     if (_added.isNotEmpty)
@@ -182,7 +279,7 @@ class _LogMealScreenState extends State<LogMealScreen> {
                           vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
+                          color: Colors.white.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
@@ -196,55 +293,60 @@ class _LogMealScreenState extends State<LogMealScreen> {
                       ),
                   ],
                 ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  height: 38,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _mealTypes.length,
-                    itemBuilder: (_, i) {
-                      final sel = _selectedMeal == _mealTypes[i];
-                      return GestureDetector(
-                        onTap: () =>
-                            setState(() => _selectedMeal = _mealTypes[i]),
-                        child: Container(
-                          margin: const EdgeInsets.only(right: 8),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: sel
-                                ? Colors.white
-                                : Colors.white.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            _mealTypes[i],
-                            style: TextStyle(
+
+                // BUG 3: seletor de abas só aparece quando NÃO há contexto travado
+                if (!_mealLocked) ...[
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    height: 38,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _mealTypes.length,
+                      itemBuilder: (_, i) {
+                        final sel = _selectedMeal == _mealTypes[i];
+                        return GestureDetector(
+                          onTap: () =>
+                              setState(() => _selectedMeal = _mealTypes[i]),
+                          child: Container(
+                            margin: const EdgeInsets.only(right: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
                               color: sel
-                                  ? const Color(0xFF1B5E20)
-                                  : Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 12,
+                                  ? Colors.white
+                                  : Colors.white.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              _mealTypes[i],
+                              style: TextStyle(
+                                color: sel
+                                    ? const Color(0xFF1B5E20)
+                                    : Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
 
+          // ── CORPO ───────────────────────────────────────────────────────────
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Adicionados
+                  // Alimentos adicionados
                   if (_added.isNotEmpty) ...[
                     const Text(
                       'Adicionados',
@@ -264,7 +366,9 @@ class _LogMealScreenState extends State<LogMealScreen> {
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                            color: const Color(0xFF2E7D32).withOpacity(0.3),
+                            color: const Color(
+                              0xFF2E7D32,
+                            ).withValues(alpha: 0.3),
                           ),
                         ),
                         child: Row(
@@ -287,7 +391,8 @@ class _LogMealScreenState extends State<LogMealScreen> {
                                     ),
                                   ),
                                   Text(
-                                    '${food['unit']} • ${food['cal']} kcal • P:${food['p']}g C:${food['c']}g G:${food['g']}g',
+                                    '${food['unit']} • ${food['cal']} kcal • '
+                                    'P:${food['p']}g C:${food['c']}g G:${food['g']}g',
                                     style: TextStyle(
                                       color: Colors.grey[500],
                                       fontSize: 11,
@@ -313,7 +418,7 @@ class _LogMealScreenState extends State<LogMealScreen> {
                     const SizedBox(height: 16),
                   ],
 
-                  // Sugestões
+                  // Lista de sugestões
                   const Text(
                     'Alimentos',
                     style: TextStyle(
@@ -345,7 +450,7 @@ class _LogMealScreenState extends State<LogMealScreen> {
                           height: 42,
                           decoration: BoxDecoration(
                             color: isAdded
-                                ? const Color(0xFF2E7D32).withOpacity(0.1)
+                                ? const Color(0xFF2E7D32).withValues(alpha: 0.1)
                                 : const Color(0xFFF5F7F5),
                             borderRadius: BorderRadius.circular(10),
                           ),
@@ -413,7 +518,7 @@ class _LogMealScreenState extends State<LogMealScreen> {
             ),
           ),
 
-          // BOTÃO SALVAR
+          // ── BOTÃO SALVAR ─────────────────────────────────────────────────────
           Container(
             padding: EdgeInsets.fromLTRB(
               20,
@@ -425,7 +530,7 @@ class _LogMealScreenState extends State<LogMealScreen> {
               color: Colors.white,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
+                  color: Colors.black.withValues(alpha: 0.06),
                   blurRadius: 10,
                   offset: const Offset(0, -4),
                 ),
@@ -435,7 +540,7 @@ class _LogMealScreenState extends State<LogMealScreen> {
               width: double.infinity,
               height: 52,
               child: ElevatedButton(
-                onPressed: _isLoading ? null : _save,
+                onPressed: (_isLoading || _isSaving) ? null : _save,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF2E7D32),
                   elevation: 0,
@@ -443,7 +548,7 @@ class _LogMealScreenState extends State<LogMealScreen> {
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                child: _isLoading
+                child: (_isLoading || _isSaving)
                     ? const SizedBox(
                         width: 20,
                         height: 20,
@@ -455,7 +560,9 @@ class _LogMealScreenState extends State<LogMealScreen> {
                     : Text(
                         _added.isEmpty
                             ? 'Adicione alimentos acima'
-                            : 'Salvar ${_added.length} alimento${_added.length > 1 ? 's' : ''} (+$_totalCal kcal)',
+                            : 'Salvar ${_added.length} '
+                                  'alimento${_added.length > 1 ? 's' : ''} '
+                                  '(+$_totalCal kcal)',
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,

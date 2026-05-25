@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:projeto_pi/providers/app_state.dart';
+import 'package:projeto_pi/services/api_service.dart';
 
 class CreatePlanScreen extends StatefulWidget {
   const CreatePlanScreen({super.key});
@@ -88,23 +89,81 @@ class _CreatePlanScreenState extends State<CreatePlanScreen> {
 
   Future<void> _generatePlan() async {
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
 
-    // Salva os dados do plano no estado global
-    context.read<AppState>().setPlan(
+    final state = context.read<AppState>();
+
+    // Captura o token ANTES de qualquer await para evitar condição de corrida
+    final token = state.token;
+
+    // Valores locais para não depender dos controllers após await
+    final double weight = double.tryParse(_weightController.text) ?? 70;
+    final double height = double.tryParse(_heightController.text) ?? 170;
+    final int age = int.tryParse(_ageController.text) ?? 25;
+    final double waterGoal = double.tryParse(_waterController.text) ?? 2.5;
+
+    // 1. Salva localmente no Provider (calcula metas Harris-Benedict)
+    state.setPlan(
       goal: _goal,
-      weight: double.tryParse(_weightController.text) ?? 70,
-      height: double.tryParse(_heightController.text) ?? 170,
-      age: int.tryParse(_ageController.text) ?? 25,
+      weight: weight,
+      height: height,
+      age: age,
       gender: _gender,
       activityLevel: _activityLevel,
-      waterGoal: double.tryParse(_waterController.text) ?? 2.5,
+      waterGoal: waterGoal,
       allergies: _allergies,
       preferences: _preferences,
     );
 
+    // 2. Salva no banco via API para persistir entre sessões
+    bool savedToDb = false;
+    String? dbError;
+    if (token.isNotEmpty) {
+      try {
+        final result = await ApiService.savePlan(
+          token: token,
+          goal: _goal,
+          weight: weight,
+          height: height,
+          age: age,
+          gender: _gender,
+          activityLevel: _activityLevel,
+          waterGoal: waterGoal,
+          caloriesGoal: state.caloriesGoal,
+          proteinGoal: state.proteinGoal,
+          carbsGoal: state.carbsGoal,
+          fatGoal: state.fatGoal,
+          allergies: _allergies,
+          preferences: _preferences,
+          pathologies: _pathologies,
+        );
+        savedToDb = result['success'] == true;
+        if (!savedToDb) {
+          dbError = result['message']?.toString();
+        }
+      } catch (e) {
+        dbError = e.toString();
+      }
+    }
+
+    if (!mounted) return;
     setState(() => _isLoading = false);
+
+    if (!savedToDb && dbError != null) {
+      // Avisa o usuário mas ainda permite continuar (plano salvo localmente)
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Plano salvo localmente. Erro ao sincronizar: $dbError',
+          ),
+          backgroundColor: Colors.orange[700],
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
+    }
+
     Navigator.pop(context, true);
   }
 
