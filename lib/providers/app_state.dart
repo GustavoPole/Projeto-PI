@@ -1,30 +1,72 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AppState extends ChangeNotifier {
-  // --- DADOS DO USUÁRIO ---
+  // ── Chaves do SharedPreferences ──────────────────────────────────────────
+  static const _kToken = 'pref_token';
+  static const _kUserName = 'pref_user_name';
+  static const _kUserEmail = 'pref_user_email';
+  static const _kPhoto = 'pref_photo_b64';
+
+  // ── DADOS DO USUÁRIO ─────────────────────────────────────────────────────
   String _userName = '';
   String _userEmail = '';
   String _token = '';
+  String? _photoBase64;
+
+  // FIX 3: flag que indica se loadFromPrefs já terminou
+  bool _prefsLoaded = false;
+  bool get prefsLoaded => _prefsLoaded;
 
   String get userName => _userName;
   String get userEmail => _userEmail;
   String get token => _token;
+  String? get photoBase64 => _photoBase64;
 
-  void setUser(String name, String email) {
+  // Carrega dados persistidos ao iniciar o app
+  Future<void> loadFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    _token = prefs.getString(_kToken) ?? '';
+    _userName = prefs.getString(_kUserName) ?? '';
+    _userEmail = prefs.getString(_kUserEmail) ?? '';
+    _photoBase64 = prefs.getString(_kPhoto);
+    _prefsLoaded = true; // FIX 3: sinaliza que terminou
+    notifyListeners();
+  }
+
+  Future<void> setUser(String name, String email) async {
     _userName = name;
     _userEmail = email;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kUserName, name);
+    await prefs.setString(_kUserEmail, email);
     notifyListeners();
   }
 
-  void setToken(String token) {
+  Future<void> setToken(String token) async {
     _token = token;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kToken, token);
     notifyListeners();
   }
 
-  void clearUser() {
+  Future<void> setPhoto(String? base64) async {
+    _photoBase64 = base64;
+    final prefs = await SharedPreferences.getInstance();
+    if (base64 != null) {
+      await prefs.setString(_kPhoto, base64);
+    } else {
+      await prefs.remove(_kPhoto);
+    }
+    notifyListeners();
+  }
+
+  Future<void> clearUser() async {
     _userName = '';
     _userEmail = '';
     _token = '';
+    _photoBase64 = null;
     _hasPlan = false;
     _allergies = [];
     _preferences = [];
@@ -34,10 +76,15 @@ class AppState extends ChangeNotifier {
     _carbs = 0;
     _fat = 0;
     _waterIntake = 0;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kToken);
+    await prefs.remove(_kUserName);
+    await prefs.remove(_kUserEmail);
+    await prefs.remove(_kPhoto);
     notifyListeners();
   }
 
-  // --- DADOS DO PLANO ---
+  // ── DADOS DO PLANO ───────────────────────────────────────────────────────
   bool _hasPlan = false;
   String _goal = '';
   double _weight = 0;
@@ -49,7 +96,6 @@ class AppState extends ChangeNotifier {
   List<String> _allergies = [];
   List<String> _preferences = [];
 
-  // Metas calculadas
   double _caloriesGoal = 0;
   double _proteinGoal = 0;
   double _carbsGoal = 0;
@@ -91,23 +137,46 @@ class AppState extends ChangeNotifier {
     _allergies = List.of(allergies);
     _preferences = List.of(preferences);
     _hasPlan = true;
-
-    // Calcula metas com base nos dados (fórmula de Harris-Benedict)
     _calculateGoals();
     notifyListeners();
   }
 
+  void setPlanFromDb({
+    required double caloriesGoal,
+    required double proteinGoal,
+    required double carbsGoal,
+    required double fatGoal,
+    required double waterGoal,
+    String goal = '',
+    double weight = 0,
+    double height = 0,
+    int age = 0,
+    String gender = '',
+    String activityLevel = '',
+  }) {
+    _caloriesGoal = caloriesGoal;
+    _proteinGoal = proteinGoal;
+    _carbsGoal = carbsGoal;
+    _fatGoal = fatGoal;
+    _waterGoal = waterGoal;
+    if (goal.isNotEmpty) _goal = goal;
+    if (weight > 0) _weight = weight;
+    if (height > 0) _height = height;
+    if (age > 0) _age = age;
+    if (gender.isNotEmpty) _gender = gender;
+    if (activityLevel.isNotEmpty) _activityLevel = activityLevel;
+    _hasPlan = true;
+    notifyListeners();
+  }
+
   void _calculateGoals() {
-    // TMB (Taxa Metabólica Basal) - Harris-Benedict
     double tmb;
     if (_gender == 'Masculino') {
       tmb = 88.36 + (13.4 * _weight) + (4.8 * _height) - (5.7 * _age);
     } else {
       tmb = 447.6 + (9.2 * _weight) + (3.1 * _height) - (4.3 * _age);
     }
-
-    // Fator de atividade
-    final Map<String, double> activityFactors = {
+    const activityFactors = {
       'Sedentário': 1.2,
       'Levemente Ativo': 1.375,
       'Moderadamente Ativo': 1.55,
@@ -116,25 +185,18 @@ class AppState extends ChangeNotifier {
     };
     final factor = activityFactors[_activityLevel] ?? 1.2;
     double tdee = tmb * factor;
-
-    // Ajusta com base no objetivo
     switch (_goal) {
       case 'Emagrecimento':
-        tdee *= 0.85; // déficit de 15%
+        tdee *= 0.85;
         break;
       case 'Ganho de Massa':
-        tdee *= 1.10; // superávit de 10%
+        tdee *= 1.10;
         break;
       case 'Melhora da Performance':
         tdee *= 1.05;
         break;
-      default:
-        break; // Manutenção = sem ajuste
     }
-
     _caloriesGoal = tdee.roundToDouble();
-
-    // Macros baseados no objetivo
     switch (_goal) {
       case 'Emagrecimento':
         _proteinGoal = (_weight * 2.0).roundToDouble();
@@ -156,7 +218,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // --- CONSUMO DO DIA ---
+  // ── CONSUMO DO DIA ───────────────────────────────────────────────────────
   double _caloriesConsumed = 0;
   double _protein = 0;
   double _carbs = 0;
@@ -174,20 +236,20 @@ class AppState extends ChangeNotifier {
   void addMeals(List<Map<String, dynamic>> newFoods) {
     for (final food in newFoods) {
       _meals.add(food);
-      _caloriesConsumed += (food['cal'] as int).toDouble();
-      _protein += (food['p'] as int).toDouble();
-      _carbs += (food['c'] as int).toDouble();
-      _fat += (food['g'] as int).toDouble();
+      _caloriesConsumed += (food['cal'] as num).toDouble();
+      _protein += (food['p'] as num).toDouble();
+      _carbs += (food['c'] as num).toDouble();
+      _fat += (food['g'] as num).toDouble();
     }
     notifyListeners();
   }
 
   void removeMeal(int index) {
     final food = _meals[index];
-    _caloriesConsumed -= (food['cal'] as int).toDouble();
-    _protein -= (food['p'] as int).toDouble();
-    _carbs -= (food['c'] as int).toDouble();
-    _fat -= (food['g'] as int).toDouble();
+    _caloriesConsumed -= (food['cal'] as num).toDouble();
+    _protein -= (food['p'] as num).toDouble();
+    _carbs -= (food['c'] as num).toDouble();
+    _fat -= (food['g'] as num).toDouble();
     _meals.removeAt(index);
     notifyListeners();
   }

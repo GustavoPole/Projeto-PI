@@ -60,9 +60,20 @@ class _LoginScreenState extends State<LoginScreen>
       if (!mounted) return;
       if (res['success']) {
         final email = _emailController.text.trim();
-        final name = email.split('@')[0];
-        context.read<AppState>().setUser(name, email);
-        context.read<AppState>().setToken(res['token'] ?? '');
+        // Usa o nome real vindo do banco, não o prefixo do email
+        final user = res['user'] as Map<String, dynamic>? ?? {};
+        final name = user['nome']?.toString().isNotEmpty == true
+            ? user['nome'].toString()
+            : email.split('@')[0];
+        final foto = user['foto_perfil']?.toString();
+
+        await context.read<AppState>().setUser(name, email);
+        await context.read<AppState>().setToken(res['token'] ?? '');
+        // Carrega foto salva no banco (se houver)
+        if (foto != null && foto.isNotEmpty) {
+          await context.read<AppState>().setPhoto(foto);
+        }
+        if (!mounted) return;
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const HomeScreen()),

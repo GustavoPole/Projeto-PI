@@ -19,7 +19,7 @@ class _ScanPlanScreenState extends State<ScanPlanScreen> {
 
   static String get _baseUrl {
     if (kIsWeb) return 'http://localhost:3000';
-    if (defaultTargetPlatform == TargetPlatform.android) return 'http://10.0.2.2:3000';
+    if (defaultTargetPlatform == TargetPlatform.android) return 'http://10.0.3.2:3000';
     return 'http://localhost:3000';
   }
 
@@ -387,6 +387,27 @@ class _ScanPlanScreenState extends State<ScanPlanScreen> {
     );
   }
 
+  Map<String, num> _calcTotais(List refeicoes) {
+    double cal = 0, prot = 0, carb = 0, gord = 0;
+    for (final r in refeicoes) {
+      for (final al in (r['alimentos'] as List? ?? [])) {
+        final qtd = (al['quantidade_g'] as num?)?.toDouble() ?? 100.0;
+        final porc = double.tryParse(al['porcao_g']?.toString() ?? '100') ?? 100.0;
+        final factor = porc > 0 ? qtd / porc : 1.0;
+        cal  += (double.tryParse(al['calorias']?.toString()  ?? '0') ?? 0) * factor;
+        prot += (double.tryParse(al['proteinas']?.toString() ?? '0') ?? 0) * factor;
+        carb += (double.tryParse(al['carbos']?.toString()    ?? '0') ?? 0) * factor;
+        gord += (double.tryParse(al['gorduras']?.toString()  ?? '0') ?? 0) * factor;
+      }
+    }
+    return {
+      'calorias': cal.round(),
+      'proteinas': (prot * 10).round() / 10,
+      'carbos': (carb * 10).round() / 10,
+      'gordura': (gord * 10).round() / 10,
+    };
+  }
+
   Widget _buildPreviewSection() {
     final plan = _data!['plano'] as Map?;
     final mm = _data!['max_micronutrientes'] as Map?;
@@ -396,6 +417,13 @@ class _ScanPlanScreenState extends State<ScanPlanScreen> {
       (sum, r) => sum + ((r['alimentos'] as List?)?.length ?? 0),
     );
 
+    final allZero = mm == null ||
+        ((mm['calorias'] ?? 0) == 0 &&
+         (mm['proteinas'] ?? 0) == 0 &&
+         (mm['carbos'] ?? 0) == 0 &&
+         (mm['gordura'] ?? 0) == 0);
+    final macros = allZero ? _calcTotais(refeicoes) : mm!;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -403,10 +431,8 @@ class _ScanPlanScreenState extends State<ScanPlanScreen> {
         _infoRow(Icons.assignment_outlined, 'Plano', plan?['nome'] ?? '-'),
         _infoRow(Icons.restaurant_menu, 'Refeições', '${refeicoes.length}'),
         _infoRow(Icons.fastfood, 'Alimentos', '$totalAlimentos itens'),
-        if (mm != null) ...[
-          const SizedBox(height: 10),
-          _macroRow(mm),
-        ],
+        const SizedBox(height: 10),
+        _macroRow(macros),
 
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 14),

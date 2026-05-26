@@ -135,7 +135,12 @@ class _RegisterScreenState extends State<RegisterScreen>
 
     setState(() => _isLoading = true);
     try {
-      final res = await ApiService.instance.registerUser(nome, cpf, email, password);
+      final res = await ApiService.instance.registerUser(
+        nome,
+        cpf,
+        email,
+        password,
+      );
       if (!mounted) return;
       if (res['success']) {
         // Salva nome e email no estado global
@@ -185,7 +190,7 @@ class _RegisterScreenState extends State<RegisterScreen>
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.15),
+                          color: Colors.white.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: const Icon(
@@ -230,7 +235,7 @@ class _RegisterScreenState extends State<RegisterScreen>
                       Text(
                         'Comece sua jornada nutricional hoje',
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.8),
+                          color: Colors.white.withValues(alpha: 0.8),
                           fontSize: 14,
                         ),
                       ),
